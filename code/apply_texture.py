@@ -5,7 +5,8 @@ import open3d as o3d
 import numpy as np
 import re
 from os.path import join
-# print(o3d.ColorMapOptimizationOption)
+# Referred from http://www.open3d.org/docs/release/tutorial/pipelines/color_map_optimization.html
+
 def sorted_alphanum(file_list_ordered):
     convert = lambda text: int(text) if text.isdigit() else text
     alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
@@ -19,22 +20,18 @@ def get_file_list(path, extension=None):
         ]
     else:
         file_list = [
-            path + f
+            # path + f
+            os.path.join(path, f)
             for f in os.listdir(path)
             if os.path.isfile(os.path.join(path, f)) and
             os.path.splitext(f)[1] == extension
         ]
     file_list = sorted_alphanum(file_list)
+
     return file_list
 
-def my_data_loader():
-    # path = o3dtut.download_fountain_dataset()
-    path = "/home/nitesh/Downloads/rgbd-scenes/desk/desk_3/"
-    debug_mode = True
-
+def data_loader(path):
     rgbd_images = []
-    # depth_image_path = get_file_list(os.path.join(path, "depth/"), extension=".png")
-    # color_image_path = get_file_list(os.path.join(path, "image/"), extension=".jpg")
     all_images = get_file_list(path, extension=".png")
     depth_image_path = []
     color_image_path = []
@@ -43,82 +40,19 @@ def my_data_loader():
             depth_image_path.append(image)
         else:
             color_image_path.append(image)
-    # color_image_path = get_file_list(path, extension=".png")
-    # print((depth_image_path))
+
     assert (len(depth_image_path) == len(color_image_path))
     for i in range(len(depth_image_path)):
         depth = o3d.io.read_image(os.path.join(depth_image_path[i]))
         color = o3d.io.read_image(os.path.join(color_image_path[i]))
         rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
             color, depth, convert_rgb_to_intensity=False)
-        if debug_mode:
-            pcd = o3d.geometry.PointCloud.create_from_rgbd_image(
-                rgbd_image,
-                o3d.camera.PinholeCameraIntrinsic(
-                    o3d.camera.PinholeCameraIntrinsicParameters.PrimeSenseDefault))
+
         rgbd_images.append(rgbd_image)
-    # o3d.visualization.draw_geometries([pcd])
     return rgbd_images
 
 is_ci = False
 
-def load_fountain_dataset():
-    rgbd_images = []
-    fountain_rgbd_dataset = o3d.data.SampleFountainRGBDImages()
-    for i in range(len(fountain_rgbd_dataset.depth_paths)):
-        depth = o3d.io.read_image(fountain_rgbd_dataset.depth_paths[i])
-        color = o3d.io.read_image(fountain_rgbd_dataset.color_paths[i])
-        rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
-            color, depth, convert_rgb_to_intensity=False)
-        rgbd_images.append(rgbd_image)
-
-    camera_trajectory = o3d.io.read_pinhole_camera_trajectory(
-        fountain_rgbd_dataset.keyframe_poses_log_path)
-    mesh = o3d.io.read_triangle_mesh(
-        fountain_rgbd_dataset.reconstruction_path)
-
-    return mesh, rgbd_images, camera_trajectory
-
-
-def run():
-    rgbd_images = my_data_loader()
-    camera_trajectory = o3d.io.read_pinhole_camera_trajectory("traj.log")
-    mesh = o3d.io.read_triangle_mesh("possion_mesh.ply")
-        
-    mesh, camera_trajectory = o3d.pipelines.color_map.run_rigid_optimizer(
-    mesh, rgbd_images, camera_trajectory,
-    o3d.pipelines.color_map.RigidOptimizerOption(maximum_iteration=0))
-
-    o3d.visualization.draw_geometries([mesh])
-
-    print("rigid optimization")
-    maximum_iteration = 100 if is_ci else 300
-    with o3d.utility.VerbosityContextManager(
-            o3d.utility.VerbosityLevel.Debug) as cm:
-        mesh, camera_trajectory = o3d.pipelines.color_map.run_rigid_optimizer(
-            mesh, rgbd_images, camera_trajectory,
-            o3d.pipelines.color_map.RigidOptimizerOption(
-                maximum_iteration=maximum_iteration))
-    o3d.visualization.draw_geometries([mesh])
-
-    # Save mesh
-    mesh_path = "possion_mesh_rigid" + '.ply'
-    o3d.io.write_triangle_mesh(mesh_path, mesh)
-
-    print("non-rigid optimization")
-    maximum_iteration = 100 if is_ci else 300
-    with o3d.utility.VerbosityContextManager(
-            o3d.utility.VerbosityLevel.Debug) as cm:
-        mesh, camera_trajectory = o3d.pipelines.color_map.run_non_rigid_optimizer(
-            mesh, rgbd_images, camera_trajectory,
-            o3d.pipelines.color_map.NonRigidOptimizerOption(
-                maximum_iteration=maximum_iteration))
-        
-    # Save mesh
-    mesh_path = "possion_mesh_nonrigid" + '.ply'
-    o3d.io.write_triangle_mesh(mesh_path, mesh)
-        
-    o3d.visualization.draw_geometries([mesh])
 
 def quaternion_to_rotation_matrix(q):
     """Convert quaternion to rotation matrix.
@@ -139,19 +73,13 @@ def quaternion_to_rotation_matrix(q):
                    1 - 2 * x**2 - 2 * y**2]])
     return R
 
-def generate_camera_trajectory():
-    path = "/home/nitesh/programming/take_home/reconstruction/data/rgbd-scenes_aligned/desk/desk_3/desk_3.pose"
-    f = open(path, "r")
+def generate_camera_trajectory(pose_file_path):
+    f = open(pose_file_path, "r")
     traj = open("traj.log", "w")
     lines = f.readlines()
-    extrinsics = []
     for line in lines:
         line = line.split(" ")
         line = [float(i) for i in line[2:]]
-        trans = np.eye(4)
-        trans[0, 3] = line[4]
-        trans[1, 3] = line[5]
-        trans[2, 3] = line[6]
         rot = quaternion_to_rotation_matrix(line[:4])
         rot = np.vstack((rot, np.array([0, 0, 0])))
         rot = np.hstack((rot, np.array([[line[4]], [line[5]], [line[6]], [1]])))
@@ -162,12 +90,45 @@ def generate_camera_trajectory():
                    f"{rot[2, 0]} {rot[2, 1]} {rot[2, 2]} {rot[2, 3]}\n"
                    f"{rot[3, 0]} {rot[3, 1]} {rot[3, 2]} {rot[3, 3]}\n"
                    )
-    my_data = {"extrinsics": extrinsics}
-    jsonFile = open("data.json", "w")
-    jsonFile.write(json.dumps(my_data))
 
-# my_data_loader()
-# generate_camera_trajectory()
-run()
-# mesh = o3d.io.read_triangle_mesh("possion_mesh.ply")
-# o3d.visualization.draw_geometries([mesh])
+
+def run(images_path, mesh_path, pose_file_path, color_map_optimizer):
+
+    mesh_save_name = mesh_path.split('.ply')[0]
+
+    rgbd_images = data_loader(images_path)
+
+    generate_camera_trajectory(pose_file_path)
+    camera_trajectory_path = "traj.log"
+
+    camera_trajectory = o3d.io.read_pinhole_camera_trajectory(camera_trajectory_path)
+    mesh = o3d.io.read_triangle_mesh(mesh_path)
+
+    if color_map_optimizer == "rigid":
+        print("rigid optimization")
+        maximum_iteration = 100 if is_ci else 300
+        with o3d.utility.VerbosityContextManager(
+                o3d.utility.VerbosityLevel.Debug) as cm:
+            mesh, camera_trajectory = o3d.pipelines.color_map.run_rigid_optimizer(
+                mesh, rgbd_images, camera_trajectory,
+                o3d.pipelines.color_map.RigidOptimizerOption(
+                    maximum_iteration=maximum_iteration))
+
+        # Save mesh
+        mesh_save_path = mesh_save_name + '_rigid.ply'
+        o3d.io.write_triangle_mesh(mesh_save_path, mesh)
+    elif color_map_optimizer == "non_rigid":
+        print("non-rigid optimization")
+        maximum_iteration = 100 if is_ci else 300
+        with o3d.utility.VerbosityContextManager(
+                o3d.utility.VerbosityLevel.Debug) as cm:
+            mesh, camera_trajectory = o3d.pipelines.color_map.run_non_rigid_optimizer(
+                mesh, rgbd_images, camera_trajectory,
+                o3d.pipelines.color_map.NonRigidOptimizerOption(
+                    maximum_iteration=maximum_iteration))
+            
+        # Save mesh
+        mesh_save_path = mesh_save_name + '_non_rigid.ply'
+        o3d.io.write_triangle_mesh(mesh_save_path, mesh)
+        
+    o3d.visualization.draw_geometries([mesh], mesh_show_back_face=True)
